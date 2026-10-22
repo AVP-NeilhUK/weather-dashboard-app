@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0a0e14">
+<title>Weather Dashboard</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;700&display=swap');
+
+:root {
+    --bg-primary: #0a0e14;
+    --bg-secondary: #151922;
+    --bg-tertiary: #1f2430;
+    --text-primary: #e6e6e6;
+    --text-secondary: #8a919e;
+    --accent-warm: #ff6b6b;
+    --accent-cool: #4ecdc4;
+    --accent-rain: #6ca0dc;
+    --border: #2d3342;
+}
+[data-theme="light"] {
+    --bg-primary: #f8f9fa;
+    --bg-secondary: #ffffff;
+    --bg-tertiary: #e9ecef;
+    --text-primary: #1a1a1a;
+    --text-secondary: #6c757d;
+    --accent-warm: #dc3545;
+    --accent-cool: #20a383;
+    --accent-rain: #0d6efd;
+    --border: #dee2e6;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { height: 100%; overflow: hidden; }
+body {
+    font-family: 'Nunito', system-ui, sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    padding: calc(env(safe-area-inset-top) + 10px) 12px calc(env(safe-area-inset-bottom) + 10px);
+    gap: 10px;
+}
+
+/* TOP BAR */
+.topbar { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.loc-wrap { flex: 1; min-width: 0; }
+#locationInput {
+    width: 100%;
+    padding: 8px 10px;
+    background: var(--bg-secondary);
+    border: 2px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font: 700 0.95rem 'Nunito', system-ui, sans-serif;
+}
+#locationInput:focus { outline: none; border-color: var(--accent-cool); }
+.icon-btn {
+    width: 40px; height: 40px; flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--bg-secondary);
+    border: 2px solid var(--border);
+    color: var(--text-primary);
+    font-size: 1.1rem;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+}
+
+/* CURRENT CONDITIONS */
+.current {
+    flex-shrink: 0;
+    background: var(--bg-secondary);
+    border: 2px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 14px;
+    align-items: center;
+}
+.cur-main { display: flex; align-items: center; gap: 10px; }
+.cur-icon { font-size: 2.2rem; line-height: 1; }
+.cur-temp { font-size: 2.1rem; font-weight: 700; line-height: 1; }
+.cur-sub { font-size: 0.72rem; color: var(--text-secondary); margin-top: 3px; }
+.details { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
+.detail-label { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary); }
+.detail-value { font-size: 0.9rem; font-weight: 700; }
+.updated { font-size: 0.65rem; color: var(--text-secondary); grid-column: 1 / -1; margin-top: -6px; }
+.updated.error { color: var(--accent-warm); }
+
+/* TABS */
+.tabs { display: flex; flex-shrink: 0; border-bottom: 2px solid var(--border); }
+.tab {
+    flex: 1; padding: 8px 0; text-align: center;
+    font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--text-secondary);
+    border-bottom: 3px solid transparent; margin-bottom: -2px;
+    cursor: pointer; background: none; border-top: none; border-left: none; border-right: none;
+    font-family: inherit;
+}
+.tab.active { color: var(--accent-cool); border-bottom-color: var(--accent-cool); }
+
+/* PAGER */
+.pager {
+    flex: 1; min-height: 0;
+    display: flex;
+    overflow-x: auto; overflow-y: hidden;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+    gap: 12px;
+}
+.pager::-webkit-scrollbar { display: none; }
+.page {
+    flex: 0 0 100%;
+    scroll-snap-align: start;
+    scroll-snap-stop: always;
+    background: var(--bg-secondary);
+    border: 2px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    display: flex; flex-direction: column;
+    min-height: 0;
+}
+.page-title {
+    font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em;
+    color: var(--text-secondary); font-weight: 700; margin-bottom: 6px; flex-shrink: 0;
+}
+.page-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+
+/* ROWS */
+.row {
+    display: grid;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.85rem;
+}
+.row:last-child { border-bottom: none; }
+.row.now { font-weight: 700; }
+.hour-row { grid-template-columns: 44px 28px 1fr 36px 62px; }
+.alert-row { grid-template-columns: 90px 1fr; }
+.day-row { grid-template-columns: 82px 28px 1fr 56px; }
+.ico { font-size: 1.15rem; text-align: center; }
+.muted { color: var(--text-secondary); }
+.warm { color: var(--accent-warm); }
+.cool { color: var(--accent-cool); }
+.rain { color: var(--accent-rain); }
+.right { text-align: right; }
+
+/* CHART */
+.chart-wrap { flex: 1; min-height: 0; position: relative; }
+#weatherChart { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: pan-x; }
+.chart-info {
+    flex-shrink: 0; min-height: 2.6em; margin-top: 6px; padding-top: 6px;
+    border-top: 1px solid var(--border);
+    font-size: 0.8rem; color: var(--text-secondary);
+}
+.legend { display: flex; gap: 12px; font-size: 0.68rem; color: var(--text-secondary); margin-bottom: 4px; flex-shrink: 0; }
+.legend i { display: inline-block; width: 10px; height: 3px; vertical-align: middle; margin-right: 4px; }
+</style>
+</head>
+<body data-theme="dark">
+
+<div class="topbar">
+    <div class="loc-wrap">
+        <input type="text" id="locationInput" placeholder="Enter location..." value="Halesowen" enterkeyhint="search" autocomplete="off">
+    </div>
+    <button class="icon-btn" id="refreshBtn" aria-label="Refresh">⟳</button>
+    <button class="icon-btn" id="themeBtn" aria-label="Toggle theme">🌙</button>
+</div>
+
+<div class="current">
+    <div>
+        <div class="cur-main">
+            <div class="cur-icon" id="curIcon">·</div>
+            <div class="cur-temp" id="curTemp">--°</div>
+        </div>
+        <div class="cur-sub" id="curDesc">Loading...</div>
+        <div class="cur-sub" id="curPlace"></div>
+    </div>
+    <div class="details" id="details"></div>
+    <div class="updated" id="updateInfo">Loading...</div>
+</div>
+
+<div class="tabs" id="tabs">
+    <button class="tab active" data-page="0">24 Hour</button>
+    <button class="tab" data-page="1">Alerts</button>
+    <button class="tab" data-page="2">Chart</button>
+    <button class="tab" data-page="3">15 Day</button>
+</div>
+
+<div class="pager" id="pager">
+    <section class="page">
+        <div class="page-title">24 Hour Forecast</div>
+        <div class="page-body" id="hourlyForecast">Loading...</div>
+    </section>
+    <section class="page">
+        <div class="page-title">Weather Alerts (All Days)</div>
+        <div class="page-body" id="weatherAlerts">Loading...</div>
+    </section>
+    <section class="page">
+        <div class="page-title">Daily Chart</div>
+        <div class="legend">
+            <span><i style="background: var(--accent-warm)"></i>High</span>
+            <span><i style="background: var(--accent-cool)"></i>Low</span>
+            <span><i style="background: var(--accent-rain); height: 8px; opacity: 0.5"></i>Rain mm</span>
+        </div>
+        <div class="chart-wrap"><canvas id="weatherChart"></canvas></div>
+        <div class="chart-info" id="chartInfo">Tap a day for details</div>
+    </section>
+    <section class="page">
+        <div class="page-title" id="forecastTitle">15 Day Forecast</div>
+        <div class="page-body" id="forecastGrid">Loading...</div>
+    </section>
+</div>
+
+<script>
+let weatherData = null;
+let currentLocation = null;
+let lastFetch = 0;
+let selectedDay = -1;
+
+const store = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (e) { return d; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+};
+
+const weatherIcons = {
+    0: '☀️', 1: '🌤️', 2: '⛅', 3: '☁️',
+    45: '🌫️', 48: '🌫️',
+    51: '🌦️', 53: '🌦️', 55: '🌧️',
+    61: '🌧️', 63: '🌧️', 65: '🌧️',
+    71: '🌨️', 73: '🌨️', 75: '🌨️',
+    77: '🌨️', 80: '🌦️', 81: '🌧️', 82: '🌧️',
+    85: '🌨️', 86: '🌨️',
+    95: '⛈️', 96: '⛈️', 99: '⛈️'
+};
+const weatherIconsNight = { 0: '🌙', 1: '🌙', 2: '🌛', 3: '☁️' };
+const weatherDescriptions = {
+    0: 'Clear sky', 1: 'Mainly clear', 2: 'Partly cloudy', 3: 'Overcast',
+    45: 'Foggy', 48: 'Rime fog',
+    51: 'Light drizzle', 53: 'Moderate drizzle', 55: 'Dense drizzle',
+    61: 'Slight rain', 63: 'Moderate rain', 65: 'Heavy rain',
+    71: 'Slight snow', 73: 'Moderate snow', 75: 'Heavy snow',
+    77: 'Snow grains', 80: 'Slight showers', 81: 'Moderate showers', 82: 'Violent showers',
+    85: 'Slight snow showers', 86: 'Heavy snow showers',
+    95: 'Thunderstorm', 96: 'Thunder + hail', 99: 'Thunder + heavy hail'
+};
+
+// Open-Meteo times are local to the forecast location ("2026-10-22T21:00"),
+// so compare them as strings rather than through the phone's clock.
+function parseLocalDate(s) {
+    const [y, m, d] = s.slice(0, 10).split('-').map(Number);
+    return new Date(y, m - 1, d);
+}
+function dayLabel(i, s) {
+    if (i === 0) return 'Today';
+    if (i === 1) return 'Tomorrow';
+    const d = parseLocalDate(s);
+    return d.toLocaleDateString('en-GB', { weekday: 'short' }) + ' ' + d.getDate();
+}
+
+function getIcon(code, timeStr, weather) {
+    if (code > 3 || !weather || !weather.daily || !weather.daily.sunrise) return weatherIcons[code] || '☀️';
+    const dayIdx = weather.daily.time.indexOf(timeStr.slice(0, 10));
+    if (dayIdx === -1) return weatherIcons[code] || '☀️';
+    const t = timeStr.slice(0, 16);
+    const isNight = t < weather.daily.sunrise[dayIdx].slice(0, 16) || t > weather.daily.sunset[dayIdx].slice(0, 16);
+    return isNight ? (weatherIconsNight[code] || '🌙') : (weatherIcons[code] || '☀️');
+}
+
+function setStatus(text, isError) {
+    const el = document.getElementById('updateInfo');
+    el.textContent = text;
+    el.classList.toggle('error', !!isError);
+}
+
+async function searchLocation() {
+    const input = document.getElementById('locationInput');
+    const location = input.value.trim();
+    if (!location) return;
+    input.blur();
+    setStatus('Updating...');
+
+    try {
+        const locationData = await fetch(
+            `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1&language=en&format=json`
+        ).then(r => r.json());
+
+        if (!locationData.results || !locationData.results[0]) {
+            setStatus(`Location "${location}" not found`, true);
+            return;
+        }
+
+        currentLocation = locationData.results[0];
+        const weather = await fetch(
+            `https://api.open-meteo.com/v1/forecast?latitude=${currentLocation.latitude}&longitude=${currentLocation.longitude}&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,surface_pressure,wind_speed_10m&hourly=temperature_2m,weather_code,relative_humidity_2m,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_sum,precipitation_probability_max,sunrise,sunset&timezone=auto&forecast_days=15`
+        ).then(r => r.json());
+
+        if (!weather.current) throw new Error(weather.reason || 'Bad response');
+
+        weatherData = weather;
+        lastFetch = Date.now();
+        store.set('wd_location', location);
+        updateUI(weather, currentLocation);
+    } catch (error) {
+        setStatus('Could not update: ' + (navigator.onLine === false ? 'no connection' : error.message), true);
+    }
+}
+
+function updateUI(weather, location) {
+    updateCurrent(weather, location);
+    updateHourly(weather);
+    updateAlerts(weather);
+    updateForecast(weather);
+    drawChart();
+    updateChartInfo();
+    const timeStr = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    setStatus(`Updated ${timeStr} · auto-refresh every 10 min`);
+}
+
+function updateCurrent(weather, location) {
+    const c = weather.current;
+    document.getElementById('curIcon').textContent = getIcon(c.weather_code, c.time, weather);
+    document.getElementById('curTemp').textContent = Math.round(c.temperature_2m) + '°C';
+    document.getElementById('curDesc').textContent = weatherDescriptions[c.weather_code] || 'Unknown';
+    document.getElementById('curPlace').textContent = `${location.name}, ${location.country || ''}`;
+    document.getElementById('details').innerHTML = `
+        <div><div class="detail-label">Feels Like</div><div class="detail-value">${Math.round(c.apparent_temperature)}°C</div></div>
+        <div><div class="detail-label">Humidity</div><div class="detail-value">${c.relative_humidity_2m}%</div></div>
+        <div><div class="detail-label">Wind</div><div class="detail-value">${Math.round(c.wind_speed_10m)} km/h</div></div>
+        <div><div class="detail-label">Pressure</div><div class="detail-value">${Math.round(c.surface_pressure)} hPa</div></div>
+    `;
+}
+
+function updateHourly(weather) {
+    const hourly = weather.hourly;
+    const nowHour = weather.current.time.slice(0, 13);
+    let startIndex = hourly.time.findIndex(t => t.slice(0, 13) === nowHour);
+    if (startIndex < 0) startIndex = 0;
+
+    let html = '';
+    for (let i = 0; i < 24 && (startIndex + i) < hourly.time.length; i++) {
+        const idx = startIndex + i;
+        const t = hourly.time[idx];
+        const temp = hourly.temperature_2m[idx];
+        html += `
+            <div class="row hour-row${i === 0 ? ' now' : ''}">
+                <div>${t.slice(11, 16)}</div>
+                <div class="ico">${getIcon(hourly.weather_code[idx], t, weather)}</div>
+                <div>${weatherDescriptions[hourly.weather_code[idx]] || 'Unknown'}</div>
+                <div class="${temp > 15 ? 'warm' : 'cool'}">${Math.round(temp)}°</div>
+                <div class="muted right">${Math.round(hourly.wind_speed_10m[idx])} km/h</div>
+            </div>`;
+    }
+    document.getElementById('hourlyForecast').innerHTML = html;
+}
+
+function updateAlerts(weather) {
+    const daily = weather.daily;
+    const hourly = weather.hourly;
+    const nowStr = weather.current.time.slice(0, 13);
+    const todayStr = daily.time[0];
+    const maxDays = Math.min(15, daily.time.length);
+    let html = '';
+
+    for (let i = 0; i < maxDays; i++) {
+        let alertText = '-';
+        let hasAlert = false;
+        const precipProb = daily.precipitation_probability_max ? (daily.precipitation_probability_max[i] ?? 0) : 0;
+
+        if (i === 0) {
+            // Today: only look at the hours still to come
+            let futureHeavyRain = false, futureRain = false;
+            for (let h = 0; h < hourly.time.length; h++) {
+                const t = hourly.time[h];
+                if (t.slice(0, 10) !== todayStr || t.slice(0, 13) < nowStr) continue;
+                const code = hourly.weather_code[h];
+                if (code === 65 || code === 82 || (weatherDescriptions[code] || '').toLowerCase().includes('heavy')) futureHeavyRain = true;
+                if (code >= 51 && code <= 82) futureRain = true;
+            }
+            if (futureHeavyRain && precipProb > 50) { alertText = `Heavy rain ${Math.round(precipProb)}%`; hasAlert = true; }
+            else if (futureRain && precipProb > 50) { alertText = `Rain ${Math.round(precipProb)}%`; hasAlert = true; }
+            else if (precipProb > 70) { alertText = `Rain ${Math.round(precipProb)}%`; hasAlert = true; }
+        } else {
+            const precip = (daily.precipitation_sum ?? [])[i] ?? 0;
+            if (precip > 10 || precipProb > 70) {
+                alertText = precip > 10 ? `Heavy rain ${Math.round(precipProb)}%` : `Rain ${Math.round(precipProb)}%`;
+                hasAlert = true;
+            } else if (precipProb > 50) {
+                alertText = `Rain ${Math.round(precipProb)}%`;
+                hasAlert = true;
+            }
+        }
+
+        html += `
+            <div class="row alert-row${i === 0 ? ' now' : ''}">
+                <div style="font-weight: 700">${dayLabel(i, daily.time[i])}</div>
+                <div class="${hasAlert ? 'rain' : 'muted'}">${alertText}</div>
+            </div>`;
+    }
+    document.getElementById('weatherAlerts').innerHTML = html;
+}
+
+function updateForecast(weather) {
+    const daily = weather.daily;
+    const maxDays = Math.min(15, daily.time.length);
+    document.getElementById('forecastTitle').textContent = `${maxDays} Day Forecast`;
+    let html = '';
+    for (let i = 0; i < maxDays; i++) {
+        const precip = (daily.precipitation_sum ?? [])[i] ?? 0;
+        html += `
+            <div class="row day-row${i === 0 ? ' now' : ''}">
+                <div>${dayLabel(i, daily.time[i])}</div>
+                <div class="ico">${weatherIcons[daily.weather_code[i]] || '☀️'}</div>
+                <div><span class="warm">${Math.round(daily.temperature_2m_max[i] ?? 0)}°</span> / <span class="cool">${Math.round(daily.temperature_2m_min[i] ?? 0)}°</span></div>
+                <div class="right ${precip > 0 ? 'rain' : 'muted'}">${precip.toFixed(1)}mm</div>
+            </div>`;
+    }
+    document.getElementById('forecastGrid').innerHTML = html;
+}
+
+// Chart runs top to bottom (one day per row) to suit a tall phone page.
+// Temperature runs left (colder) to right (warmer); rain bars sit in their own column, longer = wetter.
+function drawChart() {
+    if (!weatherData) return;
+    const canvas = document.getElementById('weatherChart');
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const W = rect.width, H = rect.height;
+    const daily = weatherData.daily;
+    const days = Math.min(15, daily.time.length);
+    const style = getComputedStyle(document.body);
+    const col = n => style.getPropertyValue(n).trim();
+    const warm = col('--accent-warm'), cool = col('--accent-cool'), rain = col('--accent-rain');
+    const muted = col('--text-secondary'), text = col('--text-primary'), border = col('--border');
+
+    // Rain gets its own column so bars never sit under the temperature labels
+    const rainW = 42;
+    const pad = { top: 6, bottom: 6, left: 74 + rainW + 8, right: 30 };
+    const plotW = W - pad.left - pad.right;
+    const rowH = (H - pad.top - pad.bottom) / days;
+    const rowY = i => pad.top + rowH * (i + 0.5);
+
+    const temps = [...daily.temperature_2m_max.slice(0, days), ...daily.temperature_2m_min.slice(0, days)];
+    const minT = Math.floor(Math.min(...temps) - 1);
+    const maxT = Math.ceil(Math.max(...temps) + 1);
+    const tx = t => pad.left + 22 + ((t - minT) / (maxT - minT)) * (plotW - 44);
+
+    const precip = (daily.precipitation_sum ?? []).slice(0, days).map(v => v ?? 0);
+    const maxP = Math.max(1, ...precip);
+
+    for (let i = 0; i < days; i++) {
+        const y = rowY(i);
+        if (i === selectedDay) {
+            ctx.fillStyle = border;
+            ctx.fillRect(0, y - rowH / 2, W, rowH);
+        }
+        // rain bar
+        if (precip[i] > 0) {
+            ctx.globalAlpha = 0.5;
+            ctx.fillStyle = rain;
+            const bw = Math.max(2, (precip[i] / maxP) * rainW);
+            ctx.fillRect(74, y - rowH * 0.3, bw, rowH * 0.6);
+            ctx.globalAlpha = 1;
+        }
+        // day label + icon
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = 'left';
+        ctx.fillStyle = i === 0 ? text : muted;
+        ctx.font = `${i === 0 ? 700 : 400} 12px Nunito, system-ui, sans-serif`;
+        const d = parseLocalDate(daily.time[i]);
+        ctx.fillText(i === 0 ? 'Today' : d.toLocaleDateString('en-GB', { weekday: 'short' }) + ' ' + d.getDate(), 0, y);
+        ctx.font = '15px sans-serif';
+        ctx.fillText(weatherIcons[daily.weather_code[i]] || '☀️', 48, y);
+    }
+
+    function line(arr, colour) {
+        ctx.strokeStyle = colour;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        for (let i = 0; i < days; i++) {
+            const x = tx(arr[i]), y = rowY(i);
+            i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+        ctx.fillStyle = colour;
+        for (let i = 0; i < days; i++) {
+            ctx.beginPath();
+            ctx.arc(tx(arr[i]), rowY(i), 2.5, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+    line(daily.temperature_2m_min, cool);
+    line(daily.temperature_2m_max, warm);
+
+    ctx.font = '700 11px Nunito, system-ui, sans-serif';
+    ctx.textBaseline = 'middle';
+    for (let i = 0; i < days; i++) {
+        const y = rowY(i);
+        ctx.fillStyle = cool;
+        ctx.textAlign = 'right';
+        ctx.fillText(Math.round(daily.temperature_2m_min[i]) + '°', tx(daily.temperature_2m_min[i]) - 6, y);
+        ctx.fillStyle = warm;
+        ctx.textAlign = 'left';
+        ctx.fillText(Math.round(daily.temperature_2m_max[i]) + '°', tx(daily.temperature_2m_max[i]) + 6, y);
+    }
+
+    canvas.chartGeom = { pad, rowH, days };
+}
+
+function updateChartInfo() {
+    const el = document.getElementById('chartInfo');
+    if (!weatherData || selectedDay < 0) { el.textContent = 'Tap a day for details'; return; }
+    const d = weatherData.daily, i = selectedDay;
+    const prob = d.precipitation_probability_max ? (d.precipitation_probability_max[i] ?? 0) : 0;
+    el.innerHTML = `<b style="color: var(--text-primary)">${parseLocalDate(d.time[i]).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' })}</b> · ${weatherDescriptions[d.weather_code[i]] || 'Unknown'}<br>
+        <span class="warm">${Math.round(d.temperature_2m_max[i])}°</span> / <span class="cool">${Math.round(d.temperature_2m_min[i])}°</span> · <span class="rain">Rain ${((d.precipitation_sum ?? [])[i] ?? 0).toFixed(1)}mm (${Math.round(prob)}%)</span>`;
+}
+
+document.getElementById('weatherChart').addEventListener('click', e => {
+    const canvas = e.currentTarget;
+    if (!canvas.chartGeom) return;
+    const { pad, rowH, days } = canvas.chartGeom;
+    const y = e.clientY - canvas.getBoundingClientRect().top;
+    const i = Math.floor((y - pad.top) / rowH);
+    if (i < 0 || i >= days) return;
+    selectedDay = (selectedDay === i) ? -1 : i;
+    drawChart();
+    updateChartInfo();
+});
+
+/* PAGER + TABS */
+const pager = document.getElementById('pager');
+const tabs = [...document.querySelectorAll('.tab')];
+function pageWidth() { return pager.clientWidth + 12; }
+function setActiveTab(n) { tabs.forEach((t, i) => t.classList.toggle('active', i === n)); }
+tabs.forEach(t => t.addEventListener('click', () => {
+    pager.scrollTo({ left: Number(t.dataset.page) * pageWidth(), behavior: 'smooth' });
+}));
+let scrollTimer;
+pager.addEventListener('scroll', () => {
+    const n = Math.round(pager.scrollLeft / pageWidth());
+    setActiveTab(n);
+    clearTimeout(scrollTimer);
+    scrollTimer = setTimeout(() => {
+        store.set('wd_page', n);
+        if (n === 2) drawChart();
+    }, 150);
+}, { passive: true });
+
+/* THEME */
+function applyTheme(theme) {
+    document.body.setAttribute('data-theme', theme);
+    document.getElementById('themeBtn').textContent = theme === 'dark' ? '🌙' : '☀️';
+    document.querySelector('meta[name="theme-color"]').setAttribute('content', theme === 'dark' ? '#0a0e14' : '#f8f9fa');
+    store.set('wd_theme', theme);
+    drawChart();
+}
+document.getElementById('themeBtn').addEventListener('click', () => {
+    applyTheme(document.body.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+});
+
+/* CONTROLS */
+document.getElementById('refreshBtn').addEventListener('click', searchLocation);
+document.getElementById('locationInput').addEventListener('keydown', e => { if (e.key === 'Enter') searchLocation(); });
+document.getElementById('locationInput').addEventListener('focus', e => e.target.select());
+
+window.addEventListener('resize', () => {
+    const n = Number(store.get('wd_page', 0));
+    pager.scrollLeft = n * pageWidth();
+    drawChart();
+});
+
+// Refresh when the app comes back to the foreground if the data is stale
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && Date.now() - lastFetch > 10 * 60 * 1000) searchLocation();
+});
+window.addEventListener('online', searchLocation);
+setInterval(() => { if (document.visibilityState === 'visible') searchLocation(); }, 10 * 60 * 1000);
+
+/* STARTUP */
+applyTheme(store.get('wd_theme', 'dark'));
+document.getElementById('locationInput').value = store.get('wd_location', 'Halesowen');
+requestAnimationFrame(() => {
+    const n = Number(store.get('wd_page', 0));
+    pager.scrollLeft = n * pageWidth();
+    setActiveTab(n);
+});
+searchLocation();
+</script>
+</body>
+</html>
