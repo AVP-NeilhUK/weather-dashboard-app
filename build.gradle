@@ -1,0 +1,47 @@
+plugins {
+    id 'com.android.application' version '8.7.3'
+}
+
+android {
+    namespace 'uk.avp.weather'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'uk.avp.weather'
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+    }
+
+    // Same key every build, so new versions install over old ones
+    signingConfigs {
+        release {
+            storeFile file('release.keystore')
+            storePassword 'a7qcmzoMmgjLED93Cr78x1Im'
+            keyAlias 'weather'
+            keyPassword 'a7qcmzoMmgjLED93Cr78x1Im'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+}
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.12.1'
+}
