@@ -56,6 +56,7 @@ body {
     font: 700 0.95rem 'Nunito', system-ui, sans-serif;
 }
 #locationInput:focus { outline: none; border-color: var(--accent-cool); }
+.icon-btn.on { border-color: var(--accent-cool); box-shadow: inset 0 0 0 1px var(--accent-cool); }
 .icon-btn {
     width: 40px; height: 40px; flex-shrink: 0;
     border-radius: 50%;
@@ -167,6 +168,7 @@ body {
     <div class="loc-wrap">
         <input type="text" id="locationInput" placeholder="Enter location..." value="Halesowen" enterkeyhint="search" autocomplete="off">
     </div>
+    <button class="icon-btn" id="gpsBtn" aria-label="Use my location">📍</button>
     <button class="icon-btn" id="refreshBtn" aria-label="Refresh">⟳</button>
     <button class="icon-btn" id="themeBtn" aria-label="Toggle theme">🌙</button>
 </div>
@@ -277,11 +279,27 @@ function setStatus(text, isError) {
     el.classList.toggle('error', !!isError);
 }
 
+// Two modes: 'gps' follows the phone's position, 'name' uses the typed place.
+// The mode is remembered, so a GPS user gets GPS again on the next launch.
+let mode = 'name';
+let busy = false;
+
+function setMode(m) {
+    mode = m;
+    store.set('wd_mode', m);
+    document.getElementById('gpsBtn').classList.toggle('on', m === 'gps');
+}
+
+function refresh() {
+    return mode === 'gps' ? useMyLocation() : searchLocation();
+}
+
 async function searchLocation() {
     const input = document.getElementById('locationInput');
     const location = input.value.trim();
     if (!location) return;
     input.blur();
+    setMode('name');
     setStatus('Updating...');
 
     try {
@@ -294,20 +312,79 @@ async function searchLocation() {
             return;
         }
 
-        currentLocation = locationData.results[0];
-        const weather = await fetch(
-            `https://api.open-meteo.com/v1/forecast?latitude=${currentLocation.latitude}&longitude=${currentLocation.longitude}&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,surface_pressure,wind_speed_10m&hourly=temperature_2m,weather_code,relative_humidity_2m,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_sum,precipitation_probability_max,sunrise,sunset&timezone=auto&forecast_days=15`
-        ).then(r => r.json());
-
-        if (!weather.current) throw new Error(weather.reason || 'Bad response');
-
-        weatherData = weather;
-        lastFetch = Date.now();
         store.set('wd_location', location);
-        updateUI(weather, currentLocation);
+        await loadWeather(locationData.results[0]);
     } catch (error) {
         setStatus('Could not update: ' + (navigator.onLine === false ? 'no connection' : error.message), true);
     }
+}
+
+function getPosition() {
+    return new Promise((resolve, reject) => {
+        if (!navigator.geolocation) return reject(new Error('location not supported'));
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+            enableHighAccuracy: true, timeout: 20000, maximumAge: 5 * 60 * 1000
+        });
+    });
+}
+
+// Turns coordinates into a place name. Falls back to the coordinates if the lookup fails.
+async function placeName(lat, lon) {
+    const fallback = { name: `${lat.toFixed(3)}, ${lon.toFixed(3)}`, country: '' };
+    try {
+        const r = await fetch(
+            `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`
+        ).then(r => r.json());
+        const name = r.locality || r.city || r.principalSubdivision;
+        return name ? { name, country: r.countryName || '' } : fallback;
+    } catch (e) {
+        return fallback;
+    }
+}
+
+async function useMyLocation() {
+    if (busy) return;
+    busy = true;
+    setMode('gps');
+    setStatus('Finding your location...');
+    try {
+        const pos = await getPosition();
+        const lat = pos.coords.latitude, lon = pos.coords.longitude;
+        const place = await placeName(lat, lon);
+        document.getElementById('locationInput').value = place.name;
+        await loadWeather({ latitude: lat, longitude: lon, name: place.name, country: place.country });
+    } catch (error) {
+        const msg = error.code === 1 ? 'location permission refused'
+                  : error.code === 2 ? 'location unavailable (is it switched on?)'
+                  : error.code === 3 ? 'location timed out, try again'
+                  : (navigator.onLine === false ? 'no connection' : error.message);
+        setStatus('Could not update: ' + msg, true);
+    } finally {
+        busy = false;
+    }
+}
+
+async function loadWeather(loc) {
+    // 16 days requested so there are 15 complete ones even when the last day isn't filled in yet
+    const weather = await fetch(
+        `https://api.open-meteo.com/v1/forecast?latitude=${loc.latitude}&longitude=${loc.longitude}&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,surface_pressure,wind_speed_10m&hourly=temperature_2m,weather_code,relative_humidity_2m,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_sum,precipitation_probability_max,sunrise,sunset&timezone=auto&forecast_days=16`
+    ).then(r => r.json());
+
+    if (!weather.current) throw new Error(weather.reason || 'Bad response');
+
+    currentLocation = loc;
+    weatherData = weather;
+    lastFetch = Date.now();
+    updateUI(weather, loc);
+}
+
+// Number of days with real high and low figures, up to 15.
+// The last forecast day is sometimes blank until the next model run.
+function numDays(weather) {
+    const d = weather.daily;
+    let n = 0;
+    while (n < 15 && n < d.time.length && d.temperature_2m_max[n] != null && d.temperature_2m_min[n] != null) n++;
+    return n;
 }
 
 function updateUI(weather, location) {
@@ -363,7 +440,7 @@ function updateAlerts(weather) {
     const hourly = weather.hourly;
     const nowStr = weather.current.time.slice(0, 13);
     const todayStr = daily.time[0];
-    const maxDays = Math.min(15, daily.time.length);
+    const maxDays = numDays(weather);
     let html = '';
 
     for (let i = 0; i < maxDays; i++) {
@@ -406,7 +483,7 @@ function updateAlerts(weather) {
 
 function updateForecast(weather) {
     const daily = weather.daily;
-    const maxDays = Math.min(15, daily.time.length);
+    const maxDays = numDays(weather);
     document.getElementById('forecastTitle').textContent = `${maxDays} Day Forecast`;
     let html = '';
     for (let i = 0; i < maxDays; i++) {
@@ -437,7 +514,7 @@ function drawChart() {
 
     const W = rect.width, H = rect.height;
     const daily = weatherData.daily;
-    const days = Math.min(15, daily.time.length);
+    const days = numDays(weatherData);
     const style = getComputedStyle(document.body);
     const col = n => style.getPropertyValue(n).trim();
     const warm = col('--accent-warm'), cool = col('--accent-cool'), rain = col('--accent-rain');
@@ -570,7 +647,8 @@ document.getElementById('themeBtn').addEventListener('click', () => {
 });
 
 /* CONTROLS */
-document.getElementById('refreshBtn').addEventListener('click', searchLocation);
+document.getElementById('refreshBtn').addEventListener('click', refresh);
+document.getElementById('gpsBtn').addEventListener('click', useMyLocation);
 document.getElementById('locationInput').addEventListener('keydown', e => { if (e.key === 'Enter') searchLocation(); });
 document.getElementById('locationInput').addEventListener('focus', e => e.target.select());
 
@@ -582,10 +660,10 @@ window.addEventListener('resize', () => {
 
 // Refresh when the app comes back to the foreground if the data is stale
 document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && Date.now() - lastFetch > 10 * 60 * 1000) searchLocation();
+    if (document.visibilityState === 'visible' && Date.now() - lastFetch > 10 * 60 * 1000) refresh();
 });
-window.addEventListener('online', searchLocation);
-setInterval(() => { if (document.visibilityState === 'visible') searchLocation(); }, 10 * 60 * 1000);
+window.addEventListener('online', refresh);
+setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, 10 * 60 * 1000);
 
 /* STARTUP */
 applyTheme(store.get('wd_theme', 'dark'));
@@ -595,7 +673,8 @@ requestAnimationFrame(() => {
     pager.scrollLeft = n * pageWidth();
     setActiveTab(n);
 });
-searchLocation();
+setMode(store.get('wd_mode', 'name'));
+refresh();
 </script>
 </body>
 </html>
