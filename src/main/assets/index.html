@@ -17,6 +17,11 @@
     --accent-warm: #ff6b6b;
     --accent-cool: #4ecdc4;
     --accent-rain: #6ca0dc;
+    --accent-wind: #b39ddb;
+    --accent-ice: #9be7ff;
+    --accent-sun: #ffd93d;
+    --accent-amber: #ff9f1c;
+    --accent-red: #ff4d4d;
     --border: #2d3342;
 }
 [data-theme="light"] {
@@ -28,6 +33,11 @@
     --accent-warm: #dc3545;
     --accent-cool: #20a383;
     --accent-rain: #0d6efd;
+    --accent-wind: #6f42c1;
+    --accent-ice: #0a8fb3;
+    --accent-sun: #b58900;
+    --accent-amber: #d9480f;
+    --accent-red: #c92a2a;
     --border: #dee2e6;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -141,7 +151,7 @@ body {
 .row:last-child { border-bottom: none; }
 .row.now { font-weight: 700; }
 .hour-row { grid-template-columns: 44px 28px 1fr 36px 62px; }
-.alert-row { grid-template-columns: 90px 1fr; }
+.alert-row { grid-template-columns: 82px 1fr; }
 .day-row { grid-template-columns: 82px 28px 1fr 56px; }
 .ico { font-size: 1.15rem; text-align: center; }
 .muted { color: var(--text-secondary); }
@@ -149,6 +159,32 @@ body {
 .cool { color: var(--accent-cool); }
 .rain { color: var(--accent-rain); }
 .right { text-align: right; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip {
+    font-size: 0.72rem; font-weight: 700; line-height: 1;
+    padding: 4px 7px; border-radius: 10px;
+    border: 1px solid currentColor; white-space: nowrap;
+}
+.c-rain { color: var(--accent-rain); }
+.c-wind { color: var(--accent-wind); }
+.c-ice { color: var(--accent-ice); }
+.c-fog { color: var(--text-secondary); }
+.c-thunder { color: var(--accent-sun); }
+.c-snow { color: var(--text-primary); }
+.c-heat { color: var(--accent-warm); }
+.warnings { margin-bottom: 8px; }
+.warn {
+    border-left: 4px solid var(--accent-sun);
+    background: var(--bg-tertiary);
+    border-radius: 4px;
+    padding: 7px 9px; margin-bottom: 6px;
+    font-size: 0.8rem; line-height: 1.35;
+}
+.warn.amber { border-left-color: var(--accent-amber); }
+.warn.red { border-left-color: var(--accent-red); }
+.warn b { display: block; margin-bottom: 2px; }
+.warn a { color: var(--accent-cool); font-weight: 700; text-decoration: none; }
+.warn-none { font-size: 0.75rem; color: var(--text-secondary); padding: 2px 0 8px; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
 
 /* CHART */
 .chart-wrap { flex: 1; min-height: 0; position: relative; }
@@ -200,7 +236,10 @@ body {
     </section>
     <section class="page">
         <div class="page-title">Weather Alerts (All Days)</div>
-        <div class="page-body" id="weatherAlerts">Loading...</div>
+        <div class="page-body">
+            <div class="warnings" id="metWarnings"></div>
+            <div id="weatherAlerts">Loading...</div>
+        </div>
     </section>
     <section class="page">
         <div class="page-title">Daily Chart</div>
@@ -429,7 +468,7 @@ async function useMyLocation() {
 async function loadWeather(loc) {
     // 16 days requested so there are 15 complete ones even when the last day isn't filled in yet
     const weather = await fetchJSON(
-        `https://api.open-meteo.com/v1/forecast?latitude=${loc.latitude}&longitude=${loc.longitude}&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,surface_pressure,wind_speed_10m&hourly=temperature_2m,weather_code,relative_humidity_2m,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_sum,precipitation_probability_max,sunrise,sunset&timezone=auto&forecast_days=16`,
+        `https://api.open-meteo.com/v1/forecast?latitude=${loc.latitude}&longitude=${loc.longitude}&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,surface_pressure,wind_speed_10m&hourly=temperature_2m,weather_code,relative_humidity_2m,wind_speed_10m,wind_gusts_10m,snowfall&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_sum,rain_sum,showers_sum,snowfall_sum,precipitation_probability_max,sunrise,sunset&timezone=auto&forecast_days=16`,
         15000, 'forecast'
     );
 
@@ -439,6 +478,7 @@ async function loadWeather(loc) {
     weatherData = weather;
     lastFetch = Date.now();
     updateUI(weather, loc);
+    updateWarnings(loc);   // runs in the background; never holds up the forecast
 }
 
 // Number of days with real high and low figures, up to 15.
@@ -498,50 +538,190 @@ function updateHourly(weather) {
     document.getElementById('hourlyForecast').innerHTML = html;
 }
 
+// Alert thresholds. Wind in km/h (gusts), temperatures in °C, snow in cm, rain in mm.
+const ALERT = {
+    windy: 60, gale: 80,          // gusts: about 37 mph and 50 mph
+    frost: 0, hardFrost: -4,
+    hot: 27, veryHot: 32,
+    snow: 0.5, heavySnow: 5,
+    heavyRain: 10
+};
+
+// Works out each day's alerts from the forecast. Today only counts the hours still to come.
+function dayAlerts(weather, i) {
+    const daily = weather.daily, hourly = weather.hourly;
+    const day = daily.time[i];
+    const nowHour = weather.current.time.slice(0, 13);
+    const list = [];
+
+    let gust = 0, tMin = Infinity, tMax = -Infinity, snow = 0;
+    let fog = false, thunder = false, freezing = false, rainCode = false, heavyCode = false;
+    for (let h = 0; h < hourly.time.length; h++) {
+        const t = hourly.time[h];
+        if (t.slice(0, 10) !== day) continue;
+        if (i === 0 && t.slice(0, 13) < nowHour) continue;
+        const code = hourly.weather_code[h];
+        gust = Math.max(gust, hourly.wind_gusts_10m?.[h] ?? 0);
+        if (hourly.temperature_2m[h] != null) {
+            tMin = Math.min(tMin, hourly.temperature_2m[h]);
+            tMax = Math.max(tMax, hourly.temperature_2m[h]);
+        }
+        snow += hourly.snowfall?.[h] ?? 0;
+        if (code === 45 || code === 48) fog = true;
+        if (code >= 95) thunder = true;
+        if ([56, 57, 66, 67].includes(code)) freezing = true;
+        if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) rainCode = true;
+        if (code === 65 || code === 67 || code === 82) heavyCode = true;
+    }
+    if (tMin === Infinity) {   // no hourly data left for this day: fall back to the daily figures
+        tMin = daily.temperature_2m_min[i];
+        tMax = daily.temperature_2m_max[i];
+        snow = daily.snowfall_sum?.[i] ?? 0;
+    }
+
+    // Rain (snow no longer counts as rain)
+    const prob = Math.round(daily.precipitation_probability_max?.[i] ?? 0);
+    const rainMm = (daily.rain_sum?.[i] ?? 0) + (daily.showers_sum?.[i] ?? 0);
+    if (i === 0) {
+        if (heavyCode && prob > 50) list.push(['c-rain', `Heavy rain ${prob}%`]);
+        else if ((rainCode && prob > 50) || (prob > 70 && snow < ALERT.snow)) list.push(['c-rain', `Rain ${prob}%`]);
+    } else {
+        if (rainMm > ALERT.heavyRain) list.push(['c-rain', `Heavy rain ${Math.round(rainMm)}mm`]);
+        else if (prob > 50 && rainMm > 0) list.push(['c-rain', `Rain ${prob}%`]);
+    }
+
+    if (freezing) list.push(['c-ice', 'Freezing rain']);
+    if (snow >= ALERT.heavySnow) list.push(['c-snow', `Heavy snow ${Math.round(snow)}cm`]);
+    else if (snow >= ALERT.snow) list.push(['c-snow', `Snow ${snow.toFixed(1)}cm`]);
+    if (thunder) list.push(['c-thunder', 'Thunder']);
+    if (gust >= ALERT.gale) list.push(['c-wind', `Gales ${Math.round(gust)} km/h`]);
+    else if (gust >= ALERT.windy) list.push(['c-wind', `Gusts ${Math.round(gust)} km/h`]);
+    if (tMin <= ALERT.hardFrost) list.push(['c-ice', `Hard frost ${Math.round(tMin)}°`]);
+    else if (tMin <= ALERT.frost) list.push(['c-ice', `Frost ${Math.round(tMin)}°`]);
+    if (fog) list.push(['c-fog', 'Fog']);
+    if (tMax >= ALERT.veryHot) list.push(['c-heat', `Very hot ${Math.round(tMax)}°`]);
+    else if (tMax >= ALERT.hot) list.push(['c-heat', `Hot ${Math.round(tMax)}°`]);
+    return list;
+}
+
 function updateAlerts(weather) {
     const daily = weather.daily;
-    const hourly = weather.hourly;
-    const nowStr = weather.current.time.slice(0, 13);
-    const todayStr = daily.time[0];
     const maxDays = numDays(weather);
     let html = '';
-
     for (let i = 0; i < maxDays; i++) {
-        let alertText = '-';
-        let hasAlert = false;
-        const precipProb = daily.precipitation_probability_max ? (daily.precipitation_probability_max[i] ?? 0) : 0;
-
-        if (i === 0) {
-            // Today: only look at the hours still to come
-            let futureHeavyRain = false, futureRain = false;
-            for (let h = 0; h < hourly.time.length; h++) {
-                const t = hourly.time[h];
-                if (t.slice(0, 10) !== todayStr || t.slice(0, 13) < nowStr) continue;
-                const code = hourly.weather_code[h];
-                if (code === 65 || code === 82 || (weatherDescriptions[code] || '').toLowerCase().includes('heavy')) futureHeavyRain = true;
-                if (code >= 51 && code <= 82) futureRain = true;
-            }
-            if (futureHeavyRain && precipProb > 50) { alertText = `Heavy rain ${Math.round(precipProb)}%`; hasAlert = true; }
-            else if (futureRain && precipProb > 50) { alertText = `Rain ${Math.round(precipProb)}%`; hasAlert = true; }
-            else if (precipProb > 70) { alertText = `Rain ${Math.round(precipProb)}%`; hasAlert = true; }
-        } else {
-            const precip = (daily.precipitation_sum ?? [])[i] ?? 0;
-            if (precip > 10 || precipProb > 70) {
-                alertText = precip > 10 ? `Heavy rain ${Math.round(precipProb)}%` : `Rain ${Math.round(precipProb)}%`;
-                hasAlert = true;
-            } else if (precipProb > 50) {
-                alertText = `Rain ${Math.round(precipProb)}%`;
-                hasAlert = true;
-            }
-        }
-
+        const list = dayAlerts(weather, i);
+        const chips = list.length
+            ? `<div class="chips">${list.map(([c, t]) => `<span class="chip ${c}">${t}</span>`).join('')}</div>`
+            : '<span class="muted">-</span>';
         html += `
             <div class="row alert-row${i === 0 ? ' now' : ''}">
                 <div style="font-weight: 700">${dayLabel(i, daily.time[i])}</div>
-                <div class="${hasAlert ? 'rain' : 'muted'}">${alertText}</div>
+                ${chips}
             </div>`;
     }
     document.getElementById('weatherAlerts').innerHTML = html;
+}
+
+/* MET OFFICE WARNINGS
+   The Met Office publishes free regional warning feeds. Their terms require a link
+   back to the full warning and credit to the Met Office, both shown with each one. */
+const MET_REGIONS = {
+    os: 'Orkney & Shetland', he: 'Highlands & Eilean Siar', gr: 'Grampian', st: 'Strathclyde',
+    ta: 'Central, Tayside & Fife', dg: 'SW Scotland, Lothian Borders', ni: 'Northern Ireland',
+    wl: 'Wales', nw: 'North West England', ne: 'North East England', yh: 'Yorkshire & Humber',
+    wm: 'West Midlands', em: 'East Midlands', ee: 'East of England', sw: 'South West England',
+    se: 'London & South East England'
+};
+// Reference towns for finding the nearest Met Office region: [lat, lon, region]
+const MET_TOWNS = [
+    [58.98,-2.96,'os'],[60.15,-1.15,'os'],
+    [57.48,-4.22,'he'],[56.82,-5.11,'he'],[58.21,-6.39,'he'],[58.59,-3.52,'he'],[57.41,-6.19,'he'],[57.90,-5.16,'he'],[57.19,-3.83,'he'],
+    [57.15,-2.09,'gr'],[57.65,-3.32,'gr'],[57.51,-1.80,'gr'],[57.05,-2.49,'gr'],[57.01,-3.40,'gr'],
+    [55.86,-4.25,'st'],[56.41,-5.47,'st'],[55.46,-4.63,'st'],[55.85,-4.42,'st'],[55.61,-4.50,'st'],[55.42,-5.60,'st'],[55.67,-3.78,'st'],[55.78,-4.04,'st'],
+    [56.40,-3.43,'ta'],[56.46,-2.97,'ta'],[56.12,-3.94,'ta'],[56.11,-3.16,'ta'],[56.34,-2.80,'ta'],[56.70,-3.73,'ta'],[56.64,-2.89,'ta'],[56.00,-3.78,'ta'],
+    [55.95,-3.19,'dg'],[55.07,-3.61,'dg'],[55.62,-2.81,'dg'],[54.90,-5.02,'dg'],[55.90,-3.52,'dg'],[55.42,-2.79,'dg'],
+    [54.60,-5.93,'ni'],[55.00,-7.32,'ni'],[54.34,-7.64,'ni'],[54.60,-7.30,'ni'],[54.18,-6.34,'ni'],[55.13,-6.67,'ni'],
+    [51.48,-3.18,'wl'],[51.62,-3.94,'wl'],[52.42,-4.08,'wl'],[53.23,-4.13,'wl'],[53.05,-3.00,'wl'],[52.51,-3.31,'wl'],[51.86,-4.31,'wl'],[51.95,-3.39,'wl'],[51.58,-3.00,'wl'],[53.32,-3.83,'wl'],[51.80,-4.97,'wl'],[52.74,-3.88,'wl'],[51.81,-2.72,'wl'],
+    [53.48,-2.24,'nw'],[53.41,-2.98,'nw'],[53.76,-2.70,'nw'],[54.89,-2.93,'nw'],[54.05,-2.80,'nw'],[54.33,-2.75,'nw'],[53.19,-2.89,'nw'],[53.82,-3.05,'nw'],[53.10,-2.44,'nw'],[53.79,-2.25,'nw'],[54.55,-3.59,'nw'],[53.26,-2.13,'nw'],[54.66,-2.75,'nw'],
+    [54.98,-1.61,'ne'],[54.91,-1.38,'ne'],[54.78,-1.57,'ne'],[54.57,-1.23,'ne'],[54.52,-1.55,'ne'],[55.77,-2.01,'ne'],[54.97,-2.10,'ne'],[55.41,-1.71,'ne'],
+    [53.80,-1.55,'yh'],[53.38,-1.47,'yh'],[53.96,-1.08,'yh'],[53.74,-0.33,'yh'],[53.79,-1.75,'yh'],[54.28,-0.40,'yh'],[53.99,-1.54,'yh'],[53.52,-1.13,'yh'],[53.57,-0.08,'yh'],[54.34,-1.43,'yh'],[53.96,-2.02,'yh'],[53.65,-1.78,'yh'],[54.49,-0.61,'yh'],
+    [52.49,-1.89,'wm'],[52.59,-2.13,'wm'],[52.41,-1.51,'wm'],[53.00,-2.18,'wm'],[52.19,-2.22,'wm'],[52.06,-2.72,'wm'],[52.71,-2.75,'wm'],[52.68,-2.45,'wm'],[52.81,-2.12,'wm'],[52.39,-2.25,'wm'],[52.28,-1.58,'wm'],[52.37,-2.72,'wm'],[52.86,-3.05,'wm'],[53.10,-2.02,'wm'],[52.09,-1.95,'wm'],[52.52,-1.47,'wm'],[52.51,-2.09,'wm'],[52.45,-2.05,'wm'],
+    [52.95,-1.15,'em'],[52.64,-1.13,'em'],[52.92,-1.48,'em'],[53.23,-0.54,'em'],[52.24,-0.90,'em'],[53.24,-1.42,'em'],[53.26,-1.91,'em'],[52.98,-0.03,'em'],[53.14,-1.20,'em'],[52.40,-0.73,'em'],[52.91,-0.64,'em'],[52.67,-0.73,'em'],[52.77,-1.20,'em'],[53.14,0.34,'em'],[53.37,0.00,'em'],
+    [52.63,1.30,'ee'],[52.21,0.12,'ee'],[52.06,1.16,'ee'],[52.57,-0.24,'ee'],[51.74,0.47,'ee'],[51.88,-0.42,'ee'],[52.14,-0.47,'ee'],[52.75,0.40,'ee'],[51.89,0.90,'ee'],[51.75,-0.34,'ee'],[51.54,0.71,'ee'],[52.48,1.75,'ee'],[52.93,1.30,'ee'],[52.25,0.71,'ee'],[52.33,-0.18,'ee'],[51.90,-0.20,'ee'],
+    [51.51,-0.13,'se'],[50.82,-0.14,'se'],[50.90,-1.40,'se'],[51.75,-1.26,'se'],[51.45,-0.97,'se'],[51.28,1.08,'se'],[51.13,1.31,'se'],[51.24,-0.57,'se'],[51.27,0.52,'se'],[50.80,-1.09,'se'],[52.04,-0.76,'se'],[51.82,-0.81,'se'],[51.06,-1.31,'se'],[50.70,-1.29,'se'],[52.06,-1.34,'se'],[50.86,0.57,'se'],[50.84,-0.78,'se'],[51.27,-1.09,'se'],[51.37,-0.10,'se'],
+    [51.45,-2.59,'sw'],[50.72,-3.53,'sw'],[50.38,-4.14,'sw'],[50.26,-5.05,'sw'],[50.72,-1.88,'sw'],[51.86,-2.24,'sw'],[51.56,-1.78,'sw'],[51.02,-3.10,'sw'],[51.07,-1.79,'sw'],[51.38,-2.36,'sw'],[51.90,-2.08,'sw'],[50.71,-2.44,'sw'],[51.08,-4.06,'sw'],[50.12,-5.54,'sw'],[50.94,-2.63,'sw'],[51.72,-1.97,'sw'],[50.83,-4.54,'sw'],[50.61,-2.46,'sw'],[51.46,-2.12,'sw'],[51.99,-2.16,'sw']
+];
+
+// Nearest reference town decides the region. Returns null outside the UK.
+function metRegion(lat, lon) {
+    let best = null, bestD = Infinity;
+    const k = Math.cos(lat * Math.PI / 180);
+    for (const [tl, tn, r] of MET_TOWNS) {
+        const dy = (lat - tl) * 111, dx = (lon - tn) * 111 * k;
+        const d = dx * dx + dy * dy;
+        if (d < bestD) { bestD = d; best = r; }
+    }
+    return Math.sqrt(bestD) <= 90 ? best : null;
+}
+
+// Inside the Android app the feed is fetched by the app itself, because the Met Office
+// site does not allow web pages on other sites to read it directly.
+const bridgeWaits = {};
+let bridgeId = 0;
+window.__bridgeDone = (id, ok, text) => {
+    const w = bridgeWaits[id];
+    if (!w) return;
+    delete bridgeWaits[id];
+    ok ? w.resolve(text) : w.reject(new Error(text || 'download failed'));
+};
+function fetchText(url, ms) {
+    if (window.AVPBridge && window.AVPBridge.fetchText) {
+        return withTimeout(new Promise((resolve, reject) => {
+            const id = 'r' + (++bridgeId);
+            bridgeWaits[id] = { resolve, reject };
+            window.AVPBridge.fetchText(id, url);
+        }), ms, 'warnings');
+    }
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), ms);
+    return fetch(url, { signal: ctrl.signal }).then(r => r.text()).finally(() => clearTimeout(timer));
+}
+
+function escapeHtml(t) {
+    return String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+async function updateWarnings(loc) {
+    const box = document.getElementById('metWarnings');
+    const region = metRegion(loc.latitude, loc.longitude);
+    if (!region) { box.innerHTML = ''; return; }
+    const name = MET_REGIONS[region];
+    try {
+        const xml = await fetchText(`https://weather.metoffice.gov.uk/public/data/PWSCache/WarningsRSS/Region/${region}`, 12000);
+        const doc = new DOMParser().parseFromString(xml, 'text/xml');
+        if (doc.querySelector('parsererror') || !doc.querySelector('channel')) throw new Error('unreadable feed');
+        const items = [...doc.querySelectorAll('item')].map(it => ({
+            title: it.querySelector('title')?.textContent.trim() || 'Weather warning',
+            link: it.querySelector('link')?.textContent.trim() || 'https://weather.metoffice.gov.uk/warnings-and-advice/uk-warnings',
+            desc: it.querySelector('description')?.textContent.trim() || ''
+        }));
+        if (!items.length) {
+            box.innerHTML = `<div class="warn-none">No Met Office warnings for ${escapeHtml(name)}</div>`;
+            return;
+        }
+        box.innerHTML = items.map(w => {
+            const text = (w.title + ' ' + w.desc).toLowerCase();
+            const level = text.includes('red warning') ? 'red' : text.includes('amber warning') ? 'amber' : '';
+            const desc = w.desc.replace(/^.*?affecting[^:]*:\s*/i, '');
+            return `<div class="warn ${level}">
+                <b>⚠ ${escapeHtml(w.title)}</b>
+                ${desc ? escapeHtml(desc) + '<br>' : ''}
+                <a href="${escapeHtml(w.link)}" target="_blank" rel="noopener">Full warning at Met Office ›</a>
+            </div>`;
+        }).join('') + `<div class="warn-none">Official warnings for ${escapeHtml(name)} · Source: Met Office</div>`;
+    } catch (e) {
+        box.innerHTML = `<div class="warn-none">Met Office warnings unavailable (${escapeHtml(e.message)})</div>`;
+    }
 }
 
 function updateForecast(weather) {
